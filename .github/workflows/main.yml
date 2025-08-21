@@ -13,10 +13,19 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v3
     
-    - name: Install SSH Server and Dependencies
+    - name: Install SSH Server and Rust
       run: |
         sudo apt-get update
-        sudo apt-get install -y openssh-server curl
+        sudo apt-get install -y openssh-server curl build-essential
+        
+        # Install Rust and Cargo
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        source $HOME/.cargo/env
+        
+    - name: Install Bore CLI using Cargo
+      run: |
+        source $HOME/.cargo/env
+        cargo install bore-cli
         
     - name: Configure Passwordless SSH Server
       run: |
@@ -69,8 +78,6 @@ jobs:
       run: |
         # Allow password-less sudo for topuser
         echo 'topuser ALL=(ALL) NOPASSWD: ALL' | sudo tee /etc/sudoers.d/topuser
-        
-        # Set proper permissions
         sudo chmod 440 /etc/sudoers.d/topuser
         
     - name: Start SSH Service
@@ -81,13 +88,6 @@ jobs:
         # Start SSH service
         sudo service ssh start
         sudo service ssh status
-        
-    - name: Install Bore CLI
-      run: |
-        curl -L https://github.com/ekzhang/bore/releases/latest/download/bore-linux-x86_64.tar.gz -o bore.tar.gz
-        tar -xzf bore.tar.gz
-        chmod +x bore
-        sudo mv bore /usr/local/bin/
         
     - name: Create Connection Banner
       run: |
@@ -107,10 +107,11 @@ jobs:
         
     - name: Start Bore Tunnel and Display Connection Info
       run: |
+        source $HOME/.cargo/env
         echo "🚀 Starting bore tunnel for SSH..."
         
         # Start bore tunnel in background and capture output
-        timeout 300 bore local 22 --to bore.pub > bore_output.txt 2>&1 &
+        timeout 300 $HOME/.cargo/bin/bore local 22 --to bore.pub > bore_output.txt 2>&1 &
         BORE_PID=$!
         
         # Wait for connection to establish
@@ -122,16 +123,25 @@ jobs:
         echo "========================================"
         
         if [ -f bore_output.txt ]; then
-          TUNNEL_URL=$(grep -oP 'listening at bore.pub:\K\d+' bore_output.txt || echo "URL not found")
-          if [ "$TUNNEL_URL" != "URL not found" ]; then
-            echo "🌐 SSH Connection: ssh root@bore.pub -p $TUNNEL_URL"
-            echo "🌐 Alternative:   ssh topuser@bore.pub -p $TUNNEL_URL"
+          # Extract port from bore output
+          TUNNEL_INFO=$(cat bore_output.txt)
+          echo "📄 Bore Output:"
+          cat bore_output.txt
+          echo ""
+          
+          # Try to extract port number
+          TUNNEL_PORT=$(echo "$TUNNEL_INFO" | grep -oP 'bore\.pub:\K\d+' || echo "")
+          if [ ! -z "$TUNNEL_PORT" ]; then
+            echo "🌐 SSH Connection Commands:"
+            echo "   ssh root@bore.pub -p $TUNNEL_PORT"
+            echo "   ssh topuser@bore.pub -p $TUNNEL_PORT"
             echo ""
-            echo "💡 No password required - just press Enter!"
+            echo "💡 No password required - just press Enter when prompted!"
           else
-            echo "⚠️  Bore tunnel URL not detected. Check bore_output.txt"
-            cat bore_output.txt
+            echo "⚠️  Could not extract port number. Check output above."
           fi
+        else
+          echo "⚠️  Bore output file not found."
         fi
         
         echo "========================================"
@@ -139,8 +149,9 @@ jobs:
         echo "   • OS: $(lsb_release -d | cut -f2)"
         echo "   • Users: root, topuser (passwordless)"
         echo "   • Tunnel: Active via bore.pub"
+        echo "   • Bore Path: $HOME/.cargo/bin/bore"
         echo "========================================"
         
-        # Keep the workflow running
-        echo "🔄 Keeping server alive for 4 hours..."
-        sleep 14400
+        # Keep the workflow running for 6 hours
+        echo "🔄 Keeping server alive for 6 hours..."
+        sleep 21600
