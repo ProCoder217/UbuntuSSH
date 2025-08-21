@@ -29,26 +29,28 @@ jobs:
         
     - name: Configure Passwordless SSH Server
       run: |
-        # Configure SSH for NO authentication
+        # Configure SSH for passwordless access
         sudo tee /etc/ssh/sshd_config > /dev/null <<EOF
         Port 22
         Protocol 2
         
-        # Disable all authentication methods
-        PasswordAuthentication no
-        PubkeyAuthentication no
-        ChallengeResponseAuthentication no
-        UsePAM no
-        
-        # Allow empty passwords and permit root login
-        PermitRootLogin yes
+        # Enable password authentication with empty passwords
+        PasswordAuthentication yes
         PermitEmptyPasswords yes
         
-        # Disable strict modes for anonymous access
+        # Disable public key authentication to force password auth
+        PubkeyAuthentication no
+        ChallengeResponseAuthentication no
+        
+        # Allow root login and disable strict modes
+        PermitRootLogin yes
         StrictModes no
         
         # Allow anyone to connect
         AllowUsers *
+        
+        # Disable PAM to avoid additional password checks
+        UsePAM no
         
         # Other settings
         X11Forwarding yes
@@ -70,12 +72,17 @@ jobs:
         echo 'topuser ALL=(ALL) NOPASSWD: ALL' | sudo tee /etc/sudoers.d/topuser
         sudo chmod 440 /etc/sudoers.d/topuser
         
+        # Verify empty passwords are set
+        echo "🔍 Password status:"
+        sudo passwd -S root
+        sudo passwd -S topuser
+        
     - name: Start and Enable SSH Service
       run: |
         # Generate SSH host keys
         sudo ssh-keygen -A
         
-        # Enable SSH service to start on boot
+        # Enable SSH service
         sudo systemctl enable ssh
         
         # Start SSH service
@@ -85,15 +92,15 @@ jobs:
         echo "🔍 SSH Service Status:"
         sudo systemctl status ssh --no-pager
         
-        # Check if SSH is listening on port 22
+        # Check SSH port
         echo ""
         echo "🔍 SSH Port Check:"
-        sudo netstat -tlnp | grep :22 || echo "SSH not listening on port 22"
+        sudo ss -tlnp | grep :22
         
-        # Test local SSH connection
+        # Test local SSH with empty password
         echo ""
-        echo "🔍 Testing Local SSH:"
-        timeout 5 ssh -o StrictHostKeyChecking=no -o BatchMode=yes root@localhost echo "SSH is working!" || echo "Local SSH test failed"
+        echo "🔍 Testing Local SSH (should work with empty password):"
+        echo "" | timeout 10 ssh -o StrictHostKeyChecking=no topuser@localhost echo "SSH working!" || echo "Local SSH test inconclusive"
         
     - name: Start Bore Tunnel and Display Connection Info
       run: |
@@ -124,7 +131,12 @@ jobs:
             echo "   ssh root@bore.pub -p $TUNNEL_PORT"
             echo "   ssh topuser@bore.pub -p $TUNNEL_PORT"
             echo ""
-            echo "💡 No password required - just press Enter when prompted!"
+            echo "💡 When prompted for password, just press ENTER (empty password)!"
+            echo ""
+            echo "🔑 Connection Instructions:"
+            echo "   1. Run the SSH command above"
+            echo "   2. When it asks for password, press ENTER"
+            echo "   3. You should be connected without typing anything!"
           else
             echo "⚠️  Could not extract port number from bore output"
           fi
@@ -133,13 +145,13 @@ jobs:
         fi
         
         echo "========================================"
-        echo "📋 Final Status Check:"
+        echo "📋 Final Configuration:"
         echo "   • SSH Service: $(sudo systemctl is-active ssh)"
-        echo "   • SSH Port 22: $(sudo netstat -tln | grep :22 | wc -l) listener(s)"
-        echo "   • Bore Process: $BORE_PID"
+        echo "   • Password Auth: Enabled with empty passwords"
+        echo "   • Root Login: Enabled"
+        echo "   • Users: root, topuser (both passwordless)"
         echo "========================================"
         
         # Keep the workflow running for 6 hours
         echo "🔄 Keeping server alive for 6 hours..."
         sleep 21600
-        
