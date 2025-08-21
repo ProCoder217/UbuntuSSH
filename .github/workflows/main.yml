@@ -1,0 +1,24 @@
+# A descriptive name for your workflow
+name: Secure Debug Session
+
+# Allows you to run this workflow manually from the Actions tab
+on:
+  workflow_dispatch:
+
+# Defines the jobs that the workflow will execute
+jobs:
+  debug:
+    name: Start Debug Session
+    runs-on: ubuntu-latest
+    timeout-minutes: 360 # The session can last for up to 6 hours
+
+    steps:
+      # Step 1: Checks out your repository's code so you can access it in the session
+      - name: Checkout repository code
+        uses: actions/checkout@v4
+
+      # Step 2: Set up a secure, password-less tmate session
+      # This action pauses the workflow and provides a secure SSH link in the logs.
+      - name: Setup tmate session for debugging
+        uses: mxschmitt/action-tmate@v3
+        
