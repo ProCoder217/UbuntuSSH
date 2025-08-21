@@ -29,9 +29,6 @@ jobs:
         
     - name: Configure Passwordless SSH Server
       run: |
-        # Backup original SSH config
-        sudo cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup
-        
         # Configure SSH for NO authentication
         sudo tee /etc/ssh/sshd_config > /dev/null <<EOF
         Port 22
@@ -53,9 +50,6 @@ jobs:
         # Allow anyone to connect
         AllowUsers *
         
-        # Disable host key checking warnings
-        LogLevel QUIET
-        
         # Other settings
         X11Forwarding yes
         PrintMotd yes
@@ -73,45 +67,41 @@ jobs:
         
         # Add topuser to sudo group
         sudo usermod -aG sudo topuser
-        
-    - name: Configure Anonymous Access
-      run: |
-        # Allow password-less sudo for topuser
         echo 'topuser ALL=(ALL) NOPASSWD: ALL' | sudo tee /etc/sudoers.d/topuser
         sudo chmod 440 /etc/sudoers.d/topuser
         
-    - name: Start SSH Service
+    - name: Start and Enable SSH Service
       run: |
         # Generate SSH host keys
         sudo ssh-keygen -A
         
+        # Enable SSH service to start on boot
+        sudo systemctl enable ssh
+        
         # Start SSH service
-        sudo service ssh start
-        sudo service ssh status
+        sudo systemctl start ssh
         
-    - name: Create Connection Banner
-      run: |
-        sudo tee /etc/motd > /dev/null <<EOF
-        ==========================================
-        🔓 ANONYMOUS SSH SERVER via Bore.pub 🔓
-        ==========================================
+        # Verify SSH is running
+        echo "🔍 SSH Service Status:"
+        sudo systemctl status ssh --no-pager
         
-        Available Users (NO PASSWORD REQUIRED):
-        • root
-        • topuser (has sudo access)
+        # Check if SSH is listening on port 22
+        echo ""
+        echo "🔍 SSH Port Check:"
+        sudo netstat -tlnp | grep :22 || echo "SSH not listening on port 22"
         
-        Just connect with: ssh username@[bore-url]
-        No password needed - press Enter when prompted
-        ==========================================
-        EOF
+        # Test local SSH connection
+        echo ""
+        echo "🔍 Testing Local SSH:"
+        timeout 5 ssh -o StrictHostKeyChecking=no -o BatchMode=yes root@localhost echo "SSH is working!" || echo "Local SSH test failed"
         
     - name: Start Bore Tunnel and Display Connection Info
       run: |
         source $HOME/.cargo/env
         echo "🚀 Starting bore tunnel for SSH..."
         
-        # Start bore tunnel in background and capture output
-        timeout 300 $HOME/.cargo/bin/bore local 22 --to bore.pub > bore_output.txt 2>&1 &
+        # Start bore tunnel in background
+        $HOME/.cargo/bin/bore local 22 --to bore.pub > bore_output.txt 2>&1 &
         BORE_PID=$!
         
         # Wait for connection to establish
@@ -123,14 +113,12 @@ jobs:
         echo "========================================"
         
         if [ -f bore_output.txt ]; then
-          # Extract port from bore output
-          TUNNEL_INFO=$(cat bore_output.txt)
           echo "📄 Bore Output:"
           cat bore_output.txt
           echo ""
           
-          # Try to extract port number
-          TUNNEL_PORT=$(echo "$TUNNEL_INFO" | grep -oP 'bore\.pub:\K\d+' || echo "")
+          # Extract port number
+          TUNNEL_PORT=$(cat bore_output.txt | grep -oE 'bore\.pub:[0-9]+' | cut -d: -f2)
           if [ ! -z "$TUNNEL_PORT" ]; then
             echo "🌐 SSH Connection Commands:"
             echo "   ssh root@bore.pub -p $TUNNEL_PORT"
@@ -138,20 +126,20 @@ jobs:
             echo ""
             echo "💡 No password required - just press Enter when prompted!"
           else
-            echo "⚠️  Could not extract port number. Check output above."
+            echo "⚠️  Could not extract port number from bore output"
           fi
         else
-          echo "⚠️  Bore output file not found."
+          echo "⚠️  Bore output file not found"
         fi
         
         echo "========================================"
-        echo "📋 Server Details:"
-        echo "   • OS: $(lsb_release -d | cut -f2)"
-        echo "   • Users: root, topuser (passwordless)"
-        echo "   • Tunnel: Active via bore.pub"
-        echo "   • Bore Path: $HOME/.cargo/bin/bore"
+        echo "📋 Final Status Check:"
+        echo "   • SSH Service: $(sudo systemctl is-active ssh)"
+        echo "   • SSH Port 22: $(sudo netstat -tln | grep :22 | wc -l) listener(s)"
+        echo "   • Bore Process: $BORE_PID"
         echo "========================================"
         
         # Keep the workflow running for 6 hours
         echo "🔄 Keeping server alive for 6 hours..."
         sleep 21600
+        
