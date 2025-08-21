@@ -1,24 +1,146 @@
-# A descriptive name for your workflow
-name: Secure Debug Session
+name: Anonymous Passwordless SSH Server with Bore.pub
 
-# Allows you to run this workflow manually from the Actions tab
 on:
   workflow_dispatch:
+  push:
+    branches: [ main ]
 
-# Defines the jobs that the workflow will execute
 jobs:
-  debug:
-    name: Start Debug Session
+  ssh-server:
     runs-on: ubuntu-latest
-    timeout-minutes: 360 # The session can last for up to 6 hours
-
+    
     steps:
-      # Step 1: Checks out your repository's code so you can access it in the session
-      - name: Checkout repository code
-        uses: actions/checkout@v4
-
-      # Step 2: Set up a secure, password-less tmate session
-      # This action pauses the workflow and provides a secure SSH link in the logs.
-      - name: Setup tmate session for debugging
-        uses: mxschmitt/action-tmate@v3
+    - name: Checkout repository
+      uses: actions/checkout@v3
+    
+    - name: Install SSH Server and Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y openssh-server curl
         
+    - name: Configure Passwordless SSH Server
+      run: |
+        # Backup original SSH config
+        sudo cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup
+        
+        # Configure SSH for NO authentication
+        sudo tee /etc/ssh/sshd_config > /dev/null <<EOF
+        Port 22
+        Protocol 2
+        
+        # Disable all authentication methods
+        PasswordAuthentication no
+        PubkeyAuthentication no
+        ChallengeResponseAuthentication no
+        UsePAM no
+        
+        # Allow empty passwords and permit root login
+        PermitRootLogin yes
+        PermitEmptyPasswords yes
+        
+        # Disable strict modes for anonymous access
+        StrictModes no
+        
+        # Allow anyone to connect
+        AllowUsers *
+        
+        # Disable host key checking warnings
+        LogLevel QUIET
+        
+        # Other settings
+        X11Forwarding yes
+        PrintMotd yes
+        Subsystem sftp /usr/lib/openssh/sftp-server
+        EOF
+        
+    - name: Create Users with Empty Passwords
+      run: |
+        # Set empty password for root
+        sudo passwd -d root
+        
+        # Create topuser with empty password
+        sudo useradd -m -s /bin/bash topuser
+        sudo passwd -d topuser
+        
+        # Add topuser to sudo group
+        sudo usermod -aG sudo topuser
+        
+    - name: Configure Anonymous Access
+      run: |
+        # Allow password-less sudo for topuser
+        echo 'topuser ALL=(ALL) NOPASSWD: ALL' | sudo tee /etc/sudoers.d/topuser
+        
+        # Set proper permissions
+        sudo chmod 440 /etc/sudoers.d/topuser
+        
+    - name: Start SSH Service
+      run: |
+        # Generate SSH host keys
+        sudo ssh-keygen -A
+        
+        # Start SSH service
+        sudo service ssh start
+        sudo service ssh status
+        
+    - name: Install Bore CLI
+      run: |
+        curl -L https://github.com/ekzhang/bore/releases/latest/download/bore-linux-x86_64.tar.gz -o bore.tar.gz
+        tar -xzf bore.tar.gz
+        chmod +x bore
+        sudo mv bore /usr/local/bin/
+        
+    - name: Create Connection Banner
+      run: |
+        sudo tee /etc/motd > /dev/null <<EOF
+        ==========================================
+        🔓 ANONYMOUS SSH SERVER via Bore.pub 🔓
+        ==========================================
+        
+        Available Users (NO PASSWORD REQUIRED):
+        • root
+        • topuser (has sudo access)
+        
+        Just connect with: ssh username@[bore-url]
+        No password needed - press Enter when prompted
+        ==========================================
+        EOF
+        
+    - name: Start Bore Tunnel and Display Connection Info
+      run: |
+        echo "🚀 Starting bore tunnel for SSH..."
+        
+        # Start bore tunnel in background and capture output
+        timeout 300 bore local 22 --to bore.pub > bore_output.txt 2>&1 &
+        BORE_PID=$!
+        
+        # Wait for connection to establish
+        sleep 15
+        
+        # Display connection information
+        echo "========================================"
+        echo "🎯 SSH SERVER IS READY!"
+        echo "========================================"
+        
+        if [ -f bore_output.txt ]; then
+          TUNNEL_URL=$(grep -oP 'listening at bore.pub:\K\d+' bore_output.txt || echo "URL not found")
+          if [ "$TUNNEL_URL" != "URL not found" ]; then
+            echo "🌐 SSH Connection: ssh root@bore.pub -p $TUNNEL_URL"
+            echo "🌐 Alternative:   ssh topuser@bore.pub -p $TUNNEL_URL"
+            echo ""
+            echo "💡 No password required - just press Enter!"
+          else
+            echo "⚠️  Bore tunnel URL not detected. Check bore_output.txt"
+            cat bore_output.txt
+          fi
+        fi
+        
+        echo "========================================"
+        echo "📋 Server Details:"
+        echo "   • OS: $(lsb_release -d | cut -f2)"
+        echo "   • Users: root, topuser (passwordless)"
+        echo "   • Tunnel: Active via bore.pub"
+        echo "========================================"
+        
+        # Keep the workflow running
+        echo "🔄 Keeping server alive for 4 hours..."
+        sleep 14400
